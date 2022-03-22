@@ -4,12 +4,12 @@
 * pip 으로 설치하기
   * PyPI에 공개돼 있는 라이브러리를 설치할 때는 pip 라는 도구를 사용
 
-<pre>
-<code>
-$ pip install <라이브러리 이름>
-$ pip3 install <라이브러리 이름>
-</code>
-</pre>
+  <pre>
+  <code>
+  $ pip install <라이브러리 이름>
+  $ pip3 install <라이브러리 이름>
+  </code>
+  </pre>
 
 
 ### 3.2. 웹 페이지 간단하게 추출하기(Requests)
@@ -52,4 +52,54 @@ $ pip install requests
 |요소 내부에 "개요"라는 텍스트 노드가 포함된 h2 요소|//h2[contains(.,"개요")]|h2:contains("개요")]|
 |요소 바로 아래에 "개요"라는 텍스트가 있는 h2 요소|//h2[text()="개요"]|불가능|
 
+* lxml로 스크레이핑하기
+  * 설치
+  <pre>
+  <code>
+  $ sudo apt-get install -y libxml2-dev libxslt-dev libpython3-dev zlib1g-dev
+  $ pip install lxml
+  $ pip install cssselect
+  </code>
+  </pre>
+ 
+  * scrape_by_lxml.py
+  <pre>
+  <code>
+  import lxml.html
 
+  # HTML 파일을 읽어 들이고, getroot() 메서드로 HtmlElement 객체를 생성합니다.
+  tree = lxml.html.parse('full_book_list.html')
+  html = tree.getroot() 
+
+  # cssselect() 메서드로 a 요소의 리스트를 추출하고 반복을 돌립니다.
+  for a in html.cssselect('a'):
+      # href 속성과 글자를 추출합니다.
+      print(a.get('href'), a.text)
+  </code>
+  </pre>
+  
+* Beautiful Soup로 스크레이핑하기
+  * 설치
+  <pre>
+  <code>
+  $ pip install beautifulsoup4
+  </code>
+  </pre>
+  
+  * scrape_by_bs4.py
+  <pre>
+  <code>
+  from bs4 import BeautifulSoup
+
+  # HTML 파일을 읽어 들이고 BeautifulSoup 객체를 생성합니다.
+  with open('full_book_list.html') as f:
+      soup = BeautifulSoup(f, 'html.parser')
+
+  # find_all() 메서드로 a 요소를 추출하고 반복을 돌립니다.
+  for a in soup.find_all('a'):
+      # href 속성과 글자를 추출합니다.
+      print(a.get('href'), a.text)
+  </code>
+  </pre>
+
+### 3.4. RSS 스크레이핑
