@@ -976,3 +976,267 @@ if __name__ == '__main__':
   </pre>
   
 ### 5-7. 추출한 데이터 활용하기
+* 지도로 시각화 하기
+  * 지오코딩으로 위치 정보 추출하기 : API 키는 구글에 로그인한 상태로 사용 신청
+  * 한국의 박물관 위치 정보 추출하기
+  <pre>
+  <code>
+  import time
+  import sys
+  import os
+  import json
+  import dbm
+  from urllib.request import urlopen
+  from urllib.parse import urlencode
+  from SPARQLWrapper import SPARQLWrapper
+
+  def main():
+      features = []  # 박물관 정보 저장을 위한 리스트
+      for museum in get_museums():
+          # 레이블이 있는 경우에는 레이블, 없는 경우에는 s를 추출합니다.
+          label = museum.get('label', museum['s'])
+          address = museum['address']
+          lng, lat = geocode(address)
+
+          # 값을 출력해 봅니다.
+          print(label, address, lng, lat)
+          # 위치 정보를 추출하지 못 했을 경우 리스트에 추가하지 않습니다.
+          if lng is None:
+              continue
+
+          # features에 박물관 정보를 GeoJSON Feature 형식으로 추가합니다.
+          features.append({
+              'type': 'Feature',
+              'geometry': {'type': 'Point', 'coordinates': [lng, lat]},
+              'properties': {'label': label, 'address': address},
+          })
+
+      # GeoJSON FeatureCollection 형식으로 dict를 생성합니다.
+      feature_collection = {
+          'type': 'FeatureCollection',
+          'features': features,
+      }
+      # FeatureCollection을 .geojson이라는 확장자의 파일로 저장합니다.
+      with open('museums.geojson', 'w') as f:
+          json.dump(feature_collection, f)
+
+  def get_museums():
+      """
+      SPARQL을 사용해 DBpedia에서 박물관 정보 추출하기
+      """
+      print('Executing SPARQL query...', file=sys.stderr)
+
+      # SPARQL 엔드 포인트를 지정해서 인스턴스를 생성합니다.
+      sparql = SPARQLWrapper('http://ko.dbpedia.org/sparql')
+
+      # 한국의 박물관을 추출하는 쿼리입니다.
+      sparql.setQuery('''
+      SELECT * WHERE {
+          ?s rdf:type dbpedia-owl:Museum .
+          ?s prop-ko:소재지 ?address .
+          OPTIONAL { ?s rdfs:label ?label . }
+      } ORDER BY ?s
+      ''')
+
+      # 반환 형식을 JSON으로 지정합니다.
+      sparql.setReturnFormat('json')
+
+      # query()로 쿼리를 실행한 뒤 convert()로 파싱합니다.
+      response = sparql.query().convert()
+      print('Got {0} results'.format(len(response['results']['bindings']), file=sys.stderr))
+      # 쿼리 결과를 반복 처리합니다.
+      for result in response['results']['bindings']:
+          # 다루기 쉽게 dict 형태로 변환해서 yield합니다.
+          yield {name: binding['value'] for name, binding in result.items()}
+
+  # Google Geolocation API
+  GOOGLE_GEOCODER_API_URL = 'https://maps.googleapis.com/maps/api/geocode/json'
+  # DBM(파일을 사용한 Key-Value 데이터베이스)로 지오코딩 결과를 캐시합니다.
+  # 이 변수는 dict처럼 다룰 수 있습니다.
+  geocoding_cache = dbm.open('geocoding.db', 'c')
+
+  def geocode(address):
+      """
+      매개변수로 지정한 주소를 지오코딩해서 위도와 경도를 반환합니다.
+      """
+      if address not in geocoding_cache:
+          # 주소가 캐시에 존재하지 않는 경우 지오코딩합니다.
+          print('Geocoding {0}...'.format(address), file=sys.stderr)
+          time.sleep(1)
+          url = GOOGLE_GEOCODER_API_URL + '?' + urlencode({
+              'key': os.environ['GOOGLE_API_ID'],
+              'language': 'ko',
+              'address': address,
+          })
+          response_text = urlopen(url).read()
+          # API 응답을 캐시에 저장합니다.
+          # 문자열을 키와 값에 넣으면 자동으로 bytes로 변환합니다.
+          geocoding_cache[address] = response_text
+
+      # 캐시 내의 API 응답을 dict로 변환합니다.
+      # 값은 bytes 자료형이므로 문자열로 변환합니다.
+      response = json.loads(geocoding_cache[address].decode('utf-8'))
+      try:
+          # JSON 형식에서 값을 추출합니다.
+          lng = response['results'][0]['geometry']['location']['lng']
+          lat = response['results'][0]['geometry']['location']['lat']
+          # float 형태로 변환한 뒤 튜플을 반환합니다.
+          return (float(lng), float(lat))
+      except:
+          return (None, None)
+
+  if __name__ == '__main__':
+      main()
+  </code>
+  </pre>
+  
+  * Google Maps JavaScript API로 지도에 시각화하기 : 지도에 GeoJSON의 내용을 출력하는 HTML
+  <pre>
+  <code>
+  <!DOCTYPE HTML>
+  <meta charset="utf-8">
+  <title>한국의 박물관</title>
+  <style>
+  html, body, #map { height: 100%; margin: 0; padding: 0; }
+  </style>
+  <div id="map"></div>
+  <script>
+  function initMap() {
+      // 지도를 초기화합니다.
+      var map = new google.maps.Map(document.getElementById('map'), {
+          center: { lat: 35.7, lng: 137.7 },
+          zoom: 7
+      });
+      // InfoWindow 객체를 생성합니다.
+      var infowindow = new google.maps.InfoWindow();
+      // geojson 파일의 상대 URL을 지정합니다.
+      var geojsonUrl = './museums.geojson';
+      // geojson 파일을 읽어 들이고 출력합니다.
+      map.data.loadGeoJson(geojsonUrl);
+      // 마커를 클릭했을 때 실행할 이벤트를 등록합니다.
+      map.data.addListener('click', function(e) {
+          // 생성하고 박물관 이름(labe)을 추가합니다.
+          var h2 = document.createElement('h2');
+          h2.textContent = e.feature.getProperty('label');
+          // div 요소를 생성하고, h2 요소와 박물관 주소(address)를 추가합니다.
+          var div = document.createElement('div');
+          div.appendChild(h2);
+          div.appendChild(document.createTextNode('주소: ' + e.feature.getProperty('address')));
+          // InfoWindow에 출력할 내용으로 div 요소를 지정합니다.
+          infowindow.setContent(div);
+          // 출력 위치로 마커의 위치를 지정합니다.
+          infowindow.setPosition(e.feature.getGeometry().get());
+          // 지정한 지점에서 38픽셀 위에 출력하게 합니다.
+          infowindow.setOptions({pixelOffset: new google.maps.Size(0, -38)});
+          // InfoWindow를 출력합니다.
+          infowindow.open(map);
+      });
+  }
+  </script>
+  <!-- Google Maps JavaScript API 스크립트를 읽어 들입니다. 완료했을 때 initMap() 함수를 호출합니다. -->
+  <script async defer src="https://maps.googleapis.com/maps/api/js?callback=initMap"></script>
+  </code>
+  </pre>
+  
+* BigQuery로 해석하기
+  * 트위터 데이터를 BigQuery로 임포트하기
+  <pre>
+  <code>
+  # 설치
+  $ pip install bigquery-python
+  
+  # import_from_stream_api_to_bigquery.py
+  import os
+  import sys
+  from datetime import timezone
+  import tweepy
+  import bigquery
+
+  # 트위터 인증 정보를 읽어 들입니다.
+  CONSUMER_KEY = os.environ['CONSUMER_KEY']
+  CONSUMER_SECRET = os.environ['CONSUMER_SECRET']
+  ACCESS_TOKEN = os.environ['ACCESS_TOKEN']
+  ACCESS_TOKEN_SECRET = os.environ['ACCESS_TOKEN_SECRET']
+  auth = tweepy.OAuthHandler(CONSUMER_KEY, CONSUMER_SECRET)
+  auth.set_access_token(ACCESS_TOKEN, ACCESS_TOKEN_SECRET)
+
+  # BigQuery 인증 정보(credentials.json)을 지정해 BigQuery 클라이언트를 생성합니다.
+  # 명시적으로 readonly=False를 지정하지 않으면 쓰기 작업을 할 수 없습니다.
+  client = bigquery.get_client(json_key_file='credentials.json', readonly=False)
+
+  # BigQuery 데이터 세트 이름
+  DATASET_NAME = 'twitter'
+
+  # BigQuery 테이블 이름
+  TABLE_NAME = 'tweets'
+
+  # 테이블이 존재하지 않으면 생성합니다.
+  if not client.check_table(DATASET_NAME, TABLE_NAME):
+      print('Creating table {0}.{1}'.format(DATASET_NAME, TABLE_NAME), file=sys.stderr)
+      # create_table()의 3번째 매개변수로 스키마를 지정합니다.
+      client.create_table(DATASET_NAME, TABLE_NAME, [
+          {'name': 'id',          'type': 'string',    'description': '트윗 ID'},
+          {'name': 'lang',        'type': 'string',    'description': '트윗 언어'},
+          {'name': 'screen_name', 'type': 'string',    'description': '사용자 이름'},
+          {'name': 'text',        'type': 'string',    'description': '트윗 문장'},
+          {'name': 'created_at',  'type': 'timestamp', 'description': '트윗 날짜'},
+      ])
+
+  class MyStreamListener(tweepy.streaming.StreamListener):
+      """
+      Streaming API로 추출한 트윗을 처리하기 위한 클래스
+      """
+      status_list = []
+      num_imported = 0
+      def on_status(self, status):
+          """
+          트윗을 추출할 때 호출되는 메서드입니다.
+          매개변수: 트윗을 나타내는 Status 객체
+          """
+          # Status 객체를 status_list에 추가합니다.
+          self.status_list.append(status)
+          if len(self.status_list) >= 500:
+              # status_list에 500개의 데이터가 모이면 BigQuery에 임포트합니다.
+              if not push_to_bigquery(self.status_list):
+                  # 임포트에 실패하면 False가 반환되므로 오류를 출력하고 종료합니다.
+                  print('Failed to send to bigquery', file=sys.stderr)
+                  return False
+              # num_imported를 추가한 뒤 status_list를 비웁니다.
+              self.num_imported += len(self.status_list)
+              self.status_list = []
+              print('Imported {0} rows'.format(self.num_imported), file=sys.stderr)
+              # 요금이 많이 나오지 않게 5000개를 임포트했으면 종료합니다.
+              # 계속 임포트하고 싶다면 다음 두 줄을 주석 처리해 주세요.
+              if self.num_imported >= 5000:
+                  return False
+
+      def push_to_bigquery(status_list):
+          """
+          트윗 리스트를 BigQuery에 임포트하는 메서드입니다.
+          """
+          # Tweepy의 Status 객체 리스트를 dict 리스트로 변환합니다.
+          rows = []
+          for status in status_list:
+              rows.append({
+                  'id': status.id_str,
+                  'lang': status.lang,
+                  'screen_name': status.author.screen_name,
+                  'text': status.text,
+                  # datetime 객체를 UTC POSIX 타임스탬프로 변환합니다.
+                  'created_at': status.created_at.replace(tzinfo=timezone.utc).timestamp(),
+              })
+          # dict 리스트를 BigQuery에 임포트합니다.
+          # 매개변수는 순서대로
+          # <데이터 세트 이름>, <테이블 이름>, <데이터 리스트>, <데이터를 식별할 필드 이름>입니다.
+          # insert_id_key는 데이터가 중복되지 않게 만들려고 사용했습니다.
+          return client.push_rows(DATASET_NAME, TABLE_NAME, rows, insert_id_key='id')
+
+  # Stream API로 읽어 들이기 시작합니다.
+  print('Collecting tweets...', file=sys.stderr)
+  stream = tweepy.Stream(auth, MyStreamListener())
+
+  # 공개된 트윗을 샘플링한 스트림을 받습니다.
+  # 언어를 지정하지 않았으므로 모든 언어의 트윗을 추출할 수 있습니다.
+  stream.sample()
+  </code>
+  </pre>
