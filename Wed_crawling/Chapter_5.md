@@ -474,3 +474,505 @@ stream.sample(languages=['ko'])
   </pre>
   
 ### 5-4. 열린 데이터 수집과 활용
+* PDF 에서 데이터 추출하기
+  * PDFMiner.six로 PDF에서 텍스트 추출하기
+  <pre>
+  <code>
+  # 설치
+  $ wget https://pypi.python.org/packages/source/p/pdfminer.six/pdfminer.six-20160202.zip
+  $ unzip pdfminer.six-20160202.zip
+  $ cd pdfminer.six-20160202.zip
+  $ python setup.py install
+  
+  # 추출
+  $ pdf2txt.py woori.pdf
+  </code>
+  </pre>
+  
+* PDF를 파싱해서 텍스트 박스의 내용 출력하기
+<pre>
+<code>
+import sys
+from pdfminer.converter import PDFPageAggregator
+from pdfminer.layout import LAParams, LTContainer, LTTextBox
+from pdfminer.pdfinterp import PDFPageInterpreter, PDFResourceManager
+from pdfminer.pdfpage import PDFPage
+
+def find_textboxes_recursively(layout_obj):
+    """
+    재귀적으로 텍스트 박스(LTTextBox)를 찾고
+    텍스트 박스들을 리스트로 반환합니다.
+    """
+    # LTTextBox를 상속받은 객체의 경우 리스트에 곧바로 넣어서 반환합니다.
+    if isinstance(layout_obj, LTTextBox):
+        return [layout_obj]
+    # LTContainer를 상속받은 객체의 경우 자식 요소를 포함하고 있다는 의미이므로
+    # 재귀적으로 자식 요소를 계속 찾습니다.
+    if isinstance(layout_obj, LTContainer):
+        boxes = []
+        for child in layout_obj:
+            boxes.extend(find_textboxes_recursively(child))
+        return boxes
+    # 아무것도 없다면 빈 리스트를 반환합니다.
+    return []
+
+# 공유 리소스를 관리하는 리소스 매니저를 생성합니다.
+laparams = LAParams()
+resource_manager = PDFResourceManager()
+
+# 페이지를 모으는 PageAggregator 객체를 생성합니다.
+device = PDFPageAggregator(resource_manager, laparams=laparams)
+
+# Interpreter 객체를 생성합니다.
+interpreter = PDFPageInterpreter(resource_manager, device)
+
+# 파일을 바이너리 형식으로 읽어 들입니다.
+with open(sys.argv[1], 'rb') as f:
+    # PDFPage.get_pages()로 파일 객체를 지정합니다.
+    # PDFPage 객체를 차례대로 추출합니다.
+    # 키워드 매개변수인 pagenos로 처리할 페이지 번호(0-index)를 리스트 형식으로 지정할 수도 있습니다.
+    for page in PDFPage.get_pages(f):
+        # 페이지를 처리합니다.
+        interpreter.process_page(page)
+        # LTPage 객체를 추출합니다.
+        layout = device.get_result()
+        # 페이지 내부의 텍스트 박스를 리스트로 추출합니다.
+        boxes = find_textboxes_recursively(layout)
+        # 텍스트 박스를 왼쪽 위의 좌표부터 차례대로 정렬합니다.
+        # y1(Y 좌표)는 위에 있을수록 크므로 음수로 변환하게 해서 비교했습니다.
+        boxes.sort(key=lambda b: (-b.y1, b.x0))
+        for box in boxes:
+            # 읽기 쉽게 선을 출력합니다.
+            print('-' * 10)
+            # 텍스트 박스의 내용을 출력합니다.
+            print(box.get_text().strip())
+</code>
+</pre>
+
+* Linked Open Data를 기반으로 데이터 수집하기
+  * SPARQL을 사용해 한국의 박물관 추출하기
+  <pre>
+  <code>
+  # pip install SPARQLWrapper
+  from SPARQLWrapper import SPARQLWrapper  
+
+  # SPARQL 엔드 포인트를 지정해서 인스턴스를 생성합니다.
+  sparql = SPARQLWrapper('http://ko.dbpedia.org/sparql')
+
+  # 한국의 박물관을 추출하는 쿼리입니다.
+  sparql.setQuery('''
+  SELECT * WHERE {
+      ?s rdf:type dbpedia-owl:Museum .
+      ?s prop-ko:소재지 ?address .
+  } ORDER BY ?s
+  ''')
+
+  # 반환 형식을 JSON으로 지정합니다.
+  sparql.setReturnFormat('json')
+
+  # query()로 쿼리를 실행한 뒤 convert()로 파싱합니다.
+  response = sparql.query().convert()
+  for result in response['results']['bindings']:
+      # 출력합니다.
+      print(result['s']['value'], result['address']['value'])
+  </code>
+  </pre>
+  
+* 웹 페이지 자동 조작
+  * RoboBrowser 사용
+  <pre>
+  <code>
+  $ pip install robobrowser chardet
+  </code>
+  </pre>
+  
+  * RoboBrowser로 구글 검색하기
+  <pre>
+  <code>
+  from robobrowser import RoboBrowser
+
+  # RoboBrowser 객체를 생성합니다.
+  # 키워드 매개변수 parser는 BeautifulSoup()의 두 번째 매개변수와 같습니다.
+  browser = RoboBrowser(parser='html.parser')
+
+  # open() 메서드로 구글 메인 페이지를 엽니다.
+  browser.open('https://www.google.co.kr/')
+
+  # 키워드를 입력합니다.
+  form = browser.get_form(action='/search')
+  form['q'] = 'Python'
+  browser.submit_form(form, list(form.submit_fields.values())[0])
+
+  # 검색 결과 제목을 추출합니다.
+  # select() 메서드는 BeautifulSoup의 select() 메서드와 같습니다.
+  for a in browser.select('h3 > a'):
+      print(a.text)
+      print(a.get('href'))
+      print()
+  </code>
+  </pre>
+
+* 네이버페이 주문 이력 추출하기
+<pre>
+<code>
+import time
+import sys
+import os
+from robobrowser import RoboBrowser
+
+# 인증 정보를 환경변수에서 추출합니다.
+NAVER_ID = os.environ['NAVER_ID']
+NAVER_PASSWORD = os.environ['NAVER_PASSWORD']
+
+# RoboBrowser 객체를 생성합니다.
+browser = RoboBrowser(
+    # Beautiful Soup에서 사용할 파서를 지정합니다.
+    parser='html.parser',
+    # 일반적인 웹 브라우저의 User-Agent(FireFox)를 사용합니다.
+    user_agent='Mozilla/5.0 (Macintosh; Intel Mac macOS 10.10; rv:45.0) Gecko/20100101 Firefox/45.0')
+
+def main():
+    # 로그인 페이지를 엽니다.
+    print('Accessing to sign in page....', file=sys.stderr)
+    browser.open('https://nid.naver.com/nidlogin.login')
+    
+    # 로그인 페이지에 들어가졌는지 확인합니다.
+    assert '네이버 : 로그인' in browser.parsed.title.string
+    
+    # name='frmNIDLogin'이라는 입력 양식을 채웁니다.
+    # 입력 양식의 name 속성은 개발자 도구로 확인할 수 있습니다.
+    form = browser.get_form(attrs={'name': 'frmNIDLogin'})
+    
+    # name='id'라는 입력 양식을 채웁니다.
+    form['id'] = NAVER_ID
+    # name='pw'라는 입력 양식을 채웁니다.
+    form['pw'] = NAVER_PASSWORD
+    
+    # 입력 양식을 전송합니다.
+    # 로그인 때 로그인을 막는 것을 회피하고자 몇 가지 추가 정보를 전송합니다.
+    print('Signing in...', file=sys.stderr)
+    browser.submit_form(form, headers={
+        'Referer': browser.url,
+        'Accept-Language': 'ko,en-US;q=0.7,en;q=0.3',
+    })
+    
+    # 주문 이력 페이지를 엽니다.
+    browser.open('https://order.pay.naver.com/home?tabMenu=SHOPPING&frm=s_order')
+    
+    # 문제가 있을 경우 HTML 소스코드를 확인할 수 있게 출력합니다.
+    # print(browser.parsed.prettify())
+    # 주문 이력 페이지가 맞는지 확인합니다.
+    assert '네이버페이' in browser.parsed.title.string
+    # 주문 이력을 출력합니다.
+    print_order_history()
+
+def print_order_history():
+    """
+    주문 이력을 출력합니다.
+    """
+    # 주문 이력을 순회합니다: 클래스 이름은 개발자 도구로 확인합니다.
+    for item in browser.select('.p_info'):
+        # 주문 이력 저장 전용 dict입니다.
+        order = {} 
+        # 주문 이력의 내용을 추출합니다.
+        name_element = item.select_one('span')
+        date_element = item.select_one('.date')
+        price_element = item.select_one('em')
+        # 내용이 있을 때만 저장합니다.
+        if name_element and date_element and price_element:
+            name = name_element.get_text().strip()
+            date = date_element.get_text().strip()
+            price = price_element.get_text().strip()
+            order[name] = {
+                'date': date,
+                'price': price
+            }
+            print(order[name]['date'], '-', order[name]['price'] + '원')
+
+if __name__ == '__main__':
+    main()
+</code>
+</pre>
+
+### 5-6. 자바스크립트를 이용한 페이지 스크레이핑*
+* 자바스크립트를 사용한 페이지에 대한 대응 방법  
+  * Selenium과 PhangomJS 설치
+  <pre>
+  <code>
+  $ pip install selenium==3.0
+  $ brew install phantomjs
+
+  $ wget https://bitbucket.org/ariya/phantomjs/downloads/phantomjs-2.1.1-linux-x86_64.tar.bz2
+  $ tar xvf phantomjs-2.1.1-linux-x86_64.tar.bz2
+  $ sudo cp phantomjs-2.1.1-linux-x86_64/bin/phantomjs /usr/local/bin/
+  $ sudo apt-get install -y fonts-nanum*
+  </code>
+  </pre>
+
+  * Selenium으로 구글 검색하기
+  <pre>
+  <code>
+  from selenium import webdriver
+  from selenium.webdriver.common.keys import Keys
+
+  # PhantomJS 모듈의 WebDriver 객체를 생성합니다.
+  driver = webdriver.PhantomJS()
+
+  # Google 메인 페이지를 엽니다.
+  driver.get('https://www.google.co.kr/')
+
+  # 타이틀에 'Google'이 포함돼 있는지 확인합니다.
+  assert 'Google' in driver.title
+
+  # 검색어를 입력하고 검색합니다.
+  input_element = driver.find_element_by_name('q')
+  input_element.send_keys('Python')
+  input_element.send_keys(Keys.RETURN)
+
+  # 타이틀에 'Python'이 포함돼 있는지 확인합니다.
+  assert 'Python' in driver.title
+
+  # 스크린샷을 찍습니다.
+  driver.save_screenshot('search_results.png')
+
+  # 검색 결과를 출력합니다.
+  for a in driver.find_elements_by_css_selector('h3 > a'):
+      print(a.text)
+      print(a.get_attribute('href'))
+      print()
+  </code>
+  </pre>
+  
+* PhantomJS 활용하기
+  * 네이버 페이 주문 이력 추출하기
+  <pre>
+  <code>
+  import sys
+  import time
+
+  from selenium import webdriver
+  from selenium.webdriver.common.by import By
+  from selenium.webdriver.support import expected_conditions as EC
+  from selenium.webdriver.support.ui import WebDriverWait
+
+  # 인증 정보를 환경변수에서 추출합니다.
+  NAVER_ID = os.environ['NAVER_ID']
+  NAVER_PASSWORD = os.environ['NAVER_PASSWORD']
+
+  def main():
+      """
+      메인 처리
+      """
+      # PhantomJS의 WebDriver 객체를 생성합니다.
+      driver = webdriver.PhantomJS()
+
+      # 화면 크기를 설정합니다.
+      driver.set_window_size(800, 600)
+
+      # 로그인하고 이동한 뒤 주문 이력을 가져옵니다.
+      sign_in(driver)
+      navigate(driver)
+      goods = scrape_history(driver)
+      # 출력합니다.
+      print(goods)
+
+  def sign_in(driver):
+      """
+      로그인합니다
+      """
+      print('Navigating...', file=sys.stderr)
+      print('Waiting for sign in page loaded...', file=sys.stderr)
+      time.sleep(2)
+
+      # 입력 양식을 입력하고 전송합니다.
+      driver.get('https://nid.naver.com/nidlogin.login')
+      e = driver.find_element_by_id('id')
+      e.clear()
+      e.send_keys(NAVER_ID)
+      e = driver.find_element_by_id('pw')
+      e.clear()
+      e.send_keys(NAVER_PASSWORD)
+      form = driver.find_element_by_css_selector("input.btn_global[type=submit]")
+      form.submit()
+
+  def navigate(driver):
+      """
+      적절한 페이지로 이동한 뒤 
+      """
+      print('Navigating...', file=sys.stderr)
+      driver.get("https://order.pay.naver.com/home?tabMenu=SHOPPING")
+      print('Waiting for contents to be loaded...', file=sys.stderr)
+      time.sleep(2)
+
+      # 페이지를 아래로 스크롤합니다.
+      # 사실 현재 예제에서는 필요 없지만 활용 예를 위해 넣어봤습니다.
+      # 스크롤을 해서 데이터를 가져오는 페이지의 경우 활용할 수 있습니다.
+      driver.execute_script('scroll(0, document.body.scrollHeight)')
+      wait = WebDriverWait(driver, 10)
+
+      # [더보기] 버튼을 클릭할 수 있는 상태가 될 때까지 대기하고 클릭합니다.
+      # 두 번 클릭해서 과거의 정보까지 들고옵니다.
+      driver.save_screenshot('note-1.png')
+      button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, '#_moreButton a')))
+      button.click()
+      button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, '#_moreButton a')))
+      button.click()
+      # 2초 대기합니다.
+      print('Waiting for contents to be loaded...', file=sys.stderr)
+      time.sleep(2)
+
+  def scrape_history(driver):
+      """
+      페이지에서 주문 이력을 추출합니다.
+      """
+      goods = []
+      for info in driver.find_elements_by_css_selector('.p_info'):
+          # 요소를 추출합니다.
+          link_element = info.find_element_by_css_selector('a')
+          title_element = info.find_element_by_css_selector('span')
+          date_element = info.find_element_by_css_selector('.date')
+          price_element = info.find_element_by_css_selector('em')
+          # 텍스트를 추출합니다.
+          goods.append({
+              'url': link_element.get_attribute('.a'),
+              'title': title_element.text,
+              'description': date_element.text + " - " + price_element.text + "원"
+          })
+      return goods
+
+  if __name__ == '__main__':
+      main()
+  </code>
+  </pre>
+  
+* RSS 피드 생성하기
+  * 설치
+  <pre>
+  <code>
+  $ pip install feedgenerator
+  </code>
+  </pre>
+  
+  * 네이버페이 주문 이력으로 피드 생성하기
+  <pre>
+  import sys
+  import time
+
+  from selenium import webdriver
+  from selenium.webdriver.common.by import By
+  from selenium.webdriver.support import expected_conditions as EC
+  from selenium.webdriver.support.ui import WebDriverWait
+  import feedgenerator
+
+  # 인증 정보를 환경변수에서 추출합니다.
+  NAVER_ID = os.environ['NAVER_ID']
+  NAVER_PASSWORD = os.environ['NAVER_PASSWORD']
+
+  def main():
+      """
+      메인 처리
+      """
+      # PhantomJS의 WebDriver 객체를 생성합니다.
+      driver = webdriver.PhantomJS()
+
+      # 화면 크기를 설정합니다.
+      driver.set_window_size(800, 600)
+
+      # 로그인하고 이동한 뒤 주문 이력을 가져옵니다.
+      sign_in(driver)
+      navigate(driver)
+      goods = scrape_history(driver)
+
+      # RSS 피드로 저장합니다.
+      with open('shopping_history.rss', 'w') as f:
+          save_as_feed(f, goods)
+
+  def sign_in(driver):
+      """
+      로그인합니다
+      """
+      print('Navigating...', file=sys.stderr)
+      print('Waiting for sign in page loaded...', file=sys.stderr)
+      time.sleep(2)
+
+      # 입력 양식을 입력하고 전송합니다.
+      driver.get('https://nid.naver.com/nidlogin.login')
+      e = driver.find_element_by_id('id')
+      e.clear()
+      e.send_keys(NAVER_ID)
+      e = driver.find_element_by_id('pw')
+      e.clear()
+      e.send_keys(NAVER_PASSWORD)
+      form = driver.find_element_by_css_selector("input.btn_global[type=submit]")
+      form.submit()
+
+  def navigate(driver):
+      """
+      적절한 페이지로 이동한 뒤 
+      """
+      print('Navigating...', file=sys.stderr)
+      driver.get("https://order.pay.naver.com/home?tabMenu=SHOPPING")
+      print('Waiting for contents to be loaded...', file=sys.stderr)
+      time.sleep(2)
+      # 페이지를 아래로 스크롤합니다.
+      # 사실 현재 예제에서는 필요 없지만 활용 예를 위해 넣어봤습니다.
+      # 스크롤을 해서 데이터를 가져오는 페이지의 경우 활용할 수 있습니다.
+      driver.execute_script('scroll(0, document.body.scrollHeight)')
+      wait = WebDriverWait(driver, 10)
+
+      # [더보기] 버튼을 클릭할 수 있는 상태가 될 때까지 대기하고 클릭합니다.
+      # 두 번 클릭해서 과거의 정보까지 들고옵니다.
+      driver.save_screenshot('note-1.png')
+      button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, '#_moreButton a')))
+      button.click()
+      button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, '#_moreButton a')))
+      button.click()
+      # 2초 대기합니다.
+      print('Waiting for contents to be loaded...', file=sys.stderr)
+      time.sleep(2)
+
+  def scrape_history(driver):
+      """
+      페이지에서 주문 이력을 추출합니다.
+      """
+      goods = []
+      for info in driver.find_elements_by_css_selector('.p_info'):
+          # 요소를 추출합니다.
+          link_element = info.find_element_by_css_selector('a')
+          title_element = info.find_element_by_css_selector('span')
+          date_element = info.find_element_by_css_selector('.date')
+          price_element = info.find_element_by_css_selector('em')
+          # 텍스트를 추출합니다.
+          goods.append({
+              'url': link_element.get_attribute('.a'),
+              'title': title_element.text,
+              'description': date_element.text + " - " + price_element.text + "원"
+          })
+      return goods
+
+  def save_as_feed(f, posts):
+      """
+      주문 내역을 피드로 저장합니다.
+      """
+      # Rss201rev2Feed 객체를 생성합니다.
+      feed = feedgenerator.Rss201rev2Feed(
+          title='네이버페이 주문 이력',
+          link='https://order.pay.naver.com/',
+          description='주문 이력')
+
+      # 피드를 추가합니다.
+      for post in posts:
+          feed.add_item(title=post['title'],
+                        link=post['url'],
+                        description=post['description'],
+                        unique_id=post['url'])
+
+      # 피드를 저장합니다.
+      feed.write(f, 'utf-8')
+
+  if __name__ == '__main__':
+      main()
+  </code>
+  </pre>
+  
+### 5-7. 추출한 데이터 활용하기
