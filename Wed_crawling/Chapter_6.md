@@ -329,15 +329,66 @@ class MySQLPipeline(object):
   * 글로벌 기본값 설정하기 : scrapy.settings.default_settings 모듈
   
 * 크롤링 대상에 폐를 끼치지 않기 위한 설정 항목
-
+  * DOWNLOAD_DELAY : 같은 웹사이트에 요청을 여러 번 보낼 때 요청 대기 시간을 설정, 1.0이상 권장
+  * RANDOMIZE_DOWNLOAD_DELAY : 웹 페이지의 다운로드 간격을 무작위로 설정할지 지정
+  * ROBOTSTXT_OBEY : 웹사이트에 robots.txt에 따를지 설정, True/False
+  
 * 병렬 처리와 관련된 설정 항목
+  * CONCURRENT_REQUESTS : 기본값(16), 동시에 병렬 처리할 요청의 최대 개수
+  * CONCURRENT_REQUESTS_PER_DOMAIN : 기본값(8), 특정 웹사이트의 도메인에 동시 병렬 처리할 요청의 최대 개수
+  * CONCURRENT_REQUESTS_PER_IP : 기본값(0), 특정 웹사이트의 IP에 동시 병렬 처리할 요청의 최대 개수
+  
 * HTTP 요청과 관련된 설정
+  * USER_AGENT : 기본값('Scrapy/\<VERSION> (+http://scrapy.org)'), HTTP 요청에 포함되는 User-Agent 헤더의 값을 지정
+  * COOKIES_ENABLED : 기본값(True), Cookie를 활성화할지 나타냄
+  * COOKIES_DEBUG : 기본값(False), True로 지정하면 Cookie 값을 로그에 출력
+  * REFERER_ENABLED : 기본값(True), 요청에 Referer헤더를 자동으로 포함할지 나타냄
+  * DEFAULT_REQUEST_HEADERS : HTTP 요청에 포함될 헤더를 dict로 지정
+  
 * HTTP 캐시 설정 항목
+  * HTTPCACHE_ENABLED : 기본값(False), True로 설정하면 HTTP 캐시를 활성화
+  * HTTPCACHE_EXPIRATION_SECS : 기본값(0), 캐시의 유효 기간을 초 단위로 지정
+  * HTTPCACHE_DIR : 기본값('httpcache'), 캐시를 저장할 디렉터리 경로를 나타냄
+  * HTTPCACHE_IGNORE_HTTP_CODES : 기본값([]), 응답을 캐시하지 않을 HTTP 상태 코드를 리스트로 지정
+  * HTTPCACHE_IGNORE_SCHEMES : 기본값(['file']), 응답을 캐시하지 않을 URL 스키마를 리스트로 지정
+  * HTTPCACHE_IGNORE_MISSING : 기본값(False), True로 지정하면 요청이 캐시돼 있지 않은 경우 요청을 무시
+  * HTTPCACHE_POLICY : 캐시 정책을 나타내는 클래스
+  
 * 오류 처리와 관련된 설정
+  * RETRY_ENABLED : 기본값(True), 타임아웃 또는 HTTP 상태코드 500 등이 발생했을 때 자동으로 재시도할지 지정
+  * RETRY_TIMES : 기본값(2), 재시도 횟수의 최댓값을 지정
+  * RETRY_HTTP_CODES : 기본값([500, 502, 503, 504, 408]), 재시도 대상 HTTP 상태 코드를 리스트로 지정
+  * HTTPERROR_ALLOWED_CODES : 기본값([]), 오류로 취급하지 않을 HTTP 상태 코드를 리스트로 지정
+  * HTTPERROR_ALLOWED_ALL : 기본값(False), True로 지정하면 모든 상태 코드를 오류로 취급하지 않고, Spider의 콜백 함수에서 처리할 수 있게 됨
+  
 * 프락시 사용하기
 
 ### 6-6. Scrapy 확장하기
 * 다운로드 처리 확장하기
+  * Downloader Middleware는 인터페이스이며, 다음과 같은 3개의 메서드 중에 1개 이상을 가진 클래스의 객체를 의미
+    * process_request(self, request, spider)
+    * process_response(self, request, response, spider)
+    * process_exception(self, request, exception, spider)
+    * 기본 Downloader Middleware
+    
+    |클래스 이름|설명|순서|
+    |---|---|---|
+    |RobotTxtMiddleware|robots.txt를 기반으로 요청을 필터링|100|
+    |HttpAuthMiddleware|Basic 인증과 관련된 헤더를 추가|300|
+    |DownloadTimeoutMiddleware|다운로드 타임아웃을 설정|350|
+    |UserAgentMiddleware|User-Agent 헤더를 추가|400|
+    |RetryMiddleware|오류가 발생했을 떄 재시도|500|
+    |DafaultHeadersMiddleware|기본 HTTP 헤더를 추가|550|
+    |AjaxCrawMiddleware|Ajax 크롤링하는 페이지를 다시 크롤링|560|
+    |MetaRefreshMiddleware|meta refresh 태그로 리다이렉트 처리|580|
+    |HttpCompressionMiddleware|압축된 응답을 처리|590|
+    |RedirectMiddleware|리다이렉트를 처리|600|
+    |CookiesMiddleware|Cookle를 처리|700|
+    |HttpProxyMiddleware|HTTP 프락시를 설정|750|
+    |ChunkedTransferMiddleware|Chunked 상태의 응답을 디코딩|830|
+    |DownloaderStats|Downloader 통계를 수집|850|
+    |HttpCacheMiddleware|HTTP 캐시를 처리|900|
+    
 * Spider의 동작 확장하기
 
 ### 6-7. 크롤링으로 데이터 수집하고 활용하기
