@@ -390,11 +390,179 @@ class MySQLPipeline(object):
     |HttpCacheMiddleware|HTTP 캐시를 처리|900|
     
 * Spider의 동작 확장하기
-
+  * Spider Middleware를 사용하면 Spider의 콜뱍 함수 처리를 래핑해서 확장할 수 있으며, 다음과 같은 4개의 메서드 중에 1개 이상을 가진 클래스의 객체를 의미
+    * process_spider_input(self, response, spider)
+    * process_spider_output(self, response, result, spider)
+    * process_spider_exception(self, response, exception, spider)
+    * process_start_requests(self, start_requests, spider)
+    * 기본 Spider Middleware
+    
+    
+    |클래스 이름|설명|순서|
+    |---|---|---|
+    |HttpErrorMiddleware|응답이 오류일 때 제거|50|
+    |OffsiteMiddleware|allowed_domain 이외의 도메인을 크롤링하지 않게 함|500|
+    |RefererMiddleware|Referer 헤더를 추가|700|
+    |UrlLengthMiddleware|너무 긴 URL을 제거|800|
+    |DepthMiddleware|링크 순회하는 깊이와 관련된 처리를 함|900|
+    
 ### 6-7. 크롤링으로 데이터 수집하고 활용하기
 * 음식점 정보 수집
+  * 서울 음식점 정보를 수집하는 Spider
+  <pre>
+  <code>
+  import re
+  from scrapy.spiders import CrawlSpider, Rule
+  from scrapy.linkextractors import LinkExtractor
+  from myproject.items import Restaurant
+
+  class VisitSeoulSpider(CrawlSpider):
+      name = "visitseoul"
+      allowed_domains = ["korean.visitseoul.net"]
+      start_urls = ['http://korean.visitseoul.net/eat?curPage=1']
+      rules = [
+          # 9페이지까지 순회합니다.
+          # 정규 표현식 \d를 \d+로 지정하면 모든 페이지를 순회합니다.
+          Rule(LinkExtractor(allow=r'/eat\?curPage=\d$')),
+          # 음식점 상세 페이지를 분석합니다.
+          Rule(LinkExtractor(allow=r'/eat/\w+/\d+'),
+               callback='parse_restaurant'),
+      ]
+
+      def parse_restaurant(self, response):
+          """
+          음식점 정보 페이지를 파싱합니다.
+          """
+          # 정보를 추출합니다.
+          name = response.css("#pageheader h3")\
+              .xpath("string()").extract_first().strip()
+          address = response.css("dt:contains('주소') + dd")\
+              .xpath("string()").extract_first().strip()
+          phone = response.css("dt:contains('전화번호') + dd")\
+              .xpath("string()").extract_first().strip()
+          station = response.css("th:contains('지하철') + td")\
+              .xpath("string()").extract_first().strip()
+
+          # 위도 경도를 추출합니다.
+          try:
+              scripts = response.css("script:contains('var lat')").xpath("string()").extract_first()
+              latitude = re.findall(r"var lat = '(.+)'", scripts)[0]
+              longitude = re.findall(r"var lng = '(.+)'", scripts)[0]
+          except Exception as exception:
+              print("예외 발생")
+              print(exception)
+              print()
+
+          # 음식점 객체를 생성합니다.
+          item = Restaurant(
+              name=name,
+              address=address,
+              phone=phone,
+              latitude=latitude,
+              longitude=longitude,
+              station=station
+          )
+          yield item
+  </code>
+  </pre>
+
 * 불특정 다수의 웹사이트 크롤링하기
+  * 불특정 다수의 페이지를 크롤링하는 Spider
+  <pre>
+  <code>
+  import scrapy
+  from myproject.items import Page
+  from myproject.utils import get_content
+
+  class BroadSpider(scrapy.Spider):
+      name = "broad"
+      start_urls = (
+          # 하테나 북마크 엔트리 페이지
+          'http://b.hatena.ne.jp/entrylist',
+      )
+
+      def parse(self, response):
+          """
+          하테나 북마크의 엔트리 페이지를 파싱합니다.
+          """
+          # 각각의 웹 페이지 링크를 추출합니다.
+          for url in response.css('a.entry-link::attr("href")').extract():
+              # parse_page() 메서드를 콜백 함수로 지정합니다.
+              yield scrapy.Request(url, callback=self.parse_page)
+          # of 뒤의 숫자를 두 자리로 지정해 5페이지(첫 페이지, 20, 40, 60, 80)만 추출하게 합니다.
+          url_more = response.css('a::attr("href")').re_first(r'.*\?of=\d{2}$')
+          if url_more:
+              # url_more의 값은 /entrylist로 시작하는 상대 URL이므로
+              # response.urljoiin() 메서드를 사용해 절대 URL로 변경합니다.
+              # 콜백 함수를 지정하지 않았으므로 응답은 기본적으로
+              # parse() 메서드에서 처리하게 됩니다.
+              yield scrapy.Request(response.urljoin(url_more))
+
+      def parse_page(self, response):
+          """
+          각 페이지를 파싱합니다.
+          """
+          # utils.py에 정의돼 있는 get_content() 함수로 타이틀과 본문을 추출합니다.
+          title, content = get_content(response.text)
+          # Page 객체로 반환합니다.
+          yield Page(url=response.url, title=title, content=content)
+  </code>
+  </pre>
 
 ### 6-8. 이미지 수집과 활용
 * 플리커에서 이미지 수집하기
+  * 플리커에서 이미지를 다운로드하는 Spider
+  <pre>
+  <code>
+  import os
+  from urllib.parse import urlencode
+  import scrapy
+  class FlickrSpider(scrapy.Spider):
+      name = "flickr"
+      # Files Pipeline으로 다운로드하는 이미지 파일은 allowed_domains에
+      # 제한을 받으므로 allowed_domains에 'staticflickr.com'을 추가해야 합니다
+      allowed_domains = ["api.flickr.com"]
+
+      # 키워드 매개변수로 Spider 매개변수 값을 받습니다.
+      def __init__(self, text='sushi'):
+          # 부모 클래스의 __init__()을 실행합니다.
+          super().__init__()
+          # 환경변수와 Spider 매개변수 값을 사용해 start_urls를 조합합니다.
+          # urlencode() 함수는 매개변수로 지정한 dict의 키와 값을 URI 인코드해서
+          # key1=value1&key2=value2라는 문자열로 반환해 줍니다.
+          self.start_urls = [
+              'https://api.flickr.com/services/rest/?' + urlencode({
+                  'method': 'flickr.photos.search',
+                  'api_key': os.environ['FLICKR_API_KEY'],
+                  'text': text,
+                  'sort': 'relevance',
+                  # CC BY 2.0, CC BY-SA 2.0, CC0를 지정합니다.
+                  'license': '4,5,9',  
+              }),
+          ]
+      def parse(self, response):
+          """
+          API의 응답을 파싱해서 file_urls라는 키를 포함한 dict를 생성하고 yield합니다.
+          """
+          for photo in response.css('photo'):
+              yield {'file_urls': [flickr_photo_url(photo)]}
+
+  def flickr_photo_url(photo):
+      """
+      플리커 사진 URL을 조합합니다.
+      참고: https://www.flickr.com/services/api/misc.urls.html
+      """
+      # 이 경우는 XPath가 CSS 선택자보다 쉬우므로 XPath를 사용하겠습니
+      return 'https://farm{farm}.staticflickr.com/{server}/{id}_{secret}_{size}.jpg'.format(
+          farm=photo.xpath('@farm').extract_first(),
+          server=photo.xpath('@server').extract_first(),
+          id=photo.xpath('@id').extract_first(),
+          secret=photo.xpath('@secret').extract_first(),
+          size='b',
+      )
+  </code>
+  </pre>
+  
 * OpenCV로 얼굴 이미지 추출하기
+  * OpenCV 설치하기
+  
