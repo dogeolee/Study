@@ -14,29 +14,6 @@ $ . scraping/bin/activate
 </code>
 </pre>
 
-
-* wget이란?
-  * HTTP 통신 또는 FTP 통신을 사용해 서버에서 파일 또는 콘텐츠를 다운로드할 때 사용하는 소프트웨어
-  * 여러 파일을 한 번에 다운로드하거나 웹 페이지의 링크를 순회하며 여러 콘텐츠를 자동으로 다운로드 할 수 있음
-
-* 설치 방법
-<pre>
-<code> 
-$ sudo apt-get update
-$ sudo apt-get install -y wget
-</code>
-</pre>
-
-* 사용법
-<pre>
-<code>
-$ wget https://wikibook.co.kr/logo.png # 로고파일 다운
-$ wget https://wikibook.co.kr/ # html파일 다운
-$ wget https://wikibook.co.kr/ -O wikibook_top.html # 저장할 이름 지정
-$ wget https://wikibook.co.kr/ -q -O - # 다운로드한 html 출력
-</code>
-</pre>
-
 ### 2-3. 파이썬 기초 지식
 * greet.py
 <pre>
