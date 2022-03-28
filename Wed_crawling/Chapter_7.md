@@ -77,12 +77,203 @@
   |-c, --checksum|파일의 변경을 검출|
   
 ### 7-2. 크롤러를 정기적으로 실행하기
+크롤러를 정기적으로 실행하면 변화가 있을 때 통지하거나 시간에 따른 데이터 변화를 확인할 수 있다. 리눅스에서 프로그램을 정기적으로 실행하기 위해 Cron이라는 소프트웨어를 사용한다.\
 * Cron 설정
+Cron은 시간, 날짜, 요일을 지정해서 프로그램을 실행할 때 사용하는 소프트웨어이다. 
 * 오류 통지
+서버에서 지동으로 실행되는 프로그램은 명령어를 직접 입력해서 실행하는 경우에 비해 오류가 났을 때 눈치채기 어렵다. 오류가 발생했을 때 메일로 통지하는 방법에 대한 설명이다.
+  * Postfix 설치
+  <pre>
+  <code>
+  $ sudo apt-get install -y postfix mailutils
+  
+  # 설치 시 설정
+  General type of mail configuration>Satellite system, System mail names>기본상태, SMTP relay host>[smtp.gmail.com]:587
+  
+  # /etc/postfix/main.cf 설정 추가
+  smtp_sasl_auth_enable = yes
+  smtp_sasl_password_maps = hash:/etc/postfix/sasl_password
+  smtp_sasl_security_options = noanonymous
+  smtp_use_tls = yes
+  
+  # /etc/postfix/sasl_passwd 설정 추가
+  [dmtp.gmail.com]:587 <Google 계정 사용자 이름>@gmail.com:<Google 계정 비밀번호>
+  
+  $ sudo chmod 600 /etc/postfix/sasl_passwd
+  $ sudo postmap /etc/postfix/sasl_passwd
+  
+  $ sudo service postfix reload
+  
+  # 메일 테스트
+  $ echo "test mail from postfix" | mail -s "Test" <자신의 메일 주소>
+  </code>
+  </pre>
 
 ### 7-3. 크롤링과 스크레이핑 분리하기
 * 메시지 큐 RQ 사용 방법
+메시지 큐는 큐를 사용해 메시지를 전달하는 방식이다. 일반적으로 메시지를 보내는 쪽과 받는 쪽은 서로 다른 스레드, 프로세스, 호스트이다. 메시지를 보내는 송신자는 비동기적으로 메시지를 큐에 송신하고, 메시지를 받는 수신자는 큐에 있는 메시지를 순차적으로 처리한다. 
+  * Redis 설치와 실행
+  <pre>
+  <code>
+  $ brew install redis
+  $ redis-server
+  $ sudo apt-get install -y redis-server
+  
+  # RQ 설치
+  $ pip install rq
+  </code>
+  </pre>
+  
+  * 잡을 큐에 넣는 스크립트
+  <pre>
+  <code>
+  from redis import Redis
+  from rq import Queue
+  from tasks import add
+
+  # localhost의 TCP 포트 6379에 있는 Redis에 접속합니다.
+  # 이러한 매개변수는 기본값이므로 생략해도 됩니다.
+  conn = Redis('localhost', 6379)
+
+  # default라는 이름의 Queue 객체를 추출합니다.
+  # 이 이름도 기본값이므로 생략해도 됩니다
+  q = Queue('default', connection=conn)
+
+  # 함수와 매개변수를 지정하고 잡을 추가합니다.
+  q.enqueue(add, 3, 4)
+  </code>
+  </pre>
+  
 * 메시지 큐로 연동하기
+메시지 큐를 크롤링에 연동하면 Redis의 메모리 소비를 줄일 수 있고, 한 번 스크레이핑이 성공한 이후에도 HTML 이 남으므로 이후에 다시 스크레이핑할 수 있다. 또한 큐에 작업을 넣은 이후 HTML 에 가해진 변경을 워커에서 확인할 수 있다.
+  * 크롤링 처리
+  <pre>
+  <code>
+  import time
+  import re
+  import sys
+
+  import requests
+  import lxml.html
+  from pymongo import MongoClient
+  from redis import Redis
+  from rq import Queue
+
+  def main():
+      """
+      크롤러의 메인 처리
+      """
+      q = Queue(connection=Redis())
+      # 로컬 호스트의 MongoDB에 접속
+      client = MongoClient('localhost', 27017)
+      # scraping 데이터베이스의 ebook_htmls 콜렉션을 추출합니다.
+      collection = client.scraping.ebook_htmls
+      # key로 빠르게 검색할 수 있게 유니크 인덱스를 생성합니다.
+      collection.create_index('key', unique=True)
+
+      session = requests.Session()
+      # 목록 페이지를 추출합니다.
+      response = requests.get('http://www.hanbit.co.kr/store/books/new_book_list.html')
+      # 상세 페이지의 URL 목록을 추출합니다.
+      urls = scrape_list_page(response)
+      for url in urls:
+          # URL로 키를 추출합니다.
+          key = extract_key(url)
+          # MongoDB에서 key에 해당하는 데이터를 검색합니다.
+          ebook_html = collection.find_one({'key': key})
+          # MongoDB에 존재하지 않는 경우에만 상세 페이지를 크롤링합니다.
+          if not ebook_html:
+              time.sleep(1)
+              print('Fetching {0}'.format(url), file=sys.stderr)
+              # 상세 페이지를 추출합니다.
+              response = session.get(url)
+              # HTML을 MongoDB에 저장합니다.
+              collection.insert_one({
+                  'url': url,
+                  'key': key,
+                  'html': response.content,
+              })
+              # 큐에 잡을 주가합니다.
+              # result_ttl=0을 매개변수로 지정해서
+              # 태스크의 반환값이 저장되지 않게 합니다.
+              q.enqueue('scraper_tasks.scrape', key, result_ttl=0)
+
+  def scrape_list_page(response):
+      """
+      목록 페이지의 Response에서 상세 페이지의 URL을 추출합니다.
+      """
+      root = lxml.html.fromstring(response.content)
+      root.make_links_absolute(response.url)
+      for a in root.cssselect('.view_box .book_tit a'):
+          url = a.get('href')
+          yield url
+
+  def extract_key(url):
+      """
+      URL에서 키(URL 끝의 p_code)를 추출합니다.
+      """
+      m = re.search(r"p_code=(.+)", url)
+      return m.group(1)
+
+  if __name__ == '__main__':
+      main()
+  </code>
+  </pre>
+  
+  * 스크레이핑 처리
+  <pre>
+  <code>
+  import re
+  import lxml.html
+  from pymongo import MongoClient
+
+  def scrape(key):
+      """
+      워커로 실행할 대상
+      """
+      # 로컬 호스트의 MongoDB에 접속합니다.
+      client = MongoClient('localhost', 27017)
+
+      # scraping 데이터베이스의 ebook_htmls 콜렉션을 추출합니다.
+      html_collection = client.scraping.ebook_htmls
+
+      # MongoDB에서 key에 해당하는 데이터를 찾습니다.
+      ebook_html = html_collection.find_one({'key': key})
+      ebook = scrape_detail_page(key, ebook_html['url'], ebook_html['html'])
+
+      # ebooks 콜렉션을 추출합니다.
+      ebook_collection = client.scraping.ebooks
+
+      # key로 빠르게 검색할 수 있게 유니크 인덱스를 생성합니다.
+      ebook_collection.create_index('key', unique=True)
+
+      # ebook을 저장합니다.
+      ebook_collection.insert_one(ebook)
+
+  def scrape_detail_page(key, url, html):
+      """
+      상세 페이지의 Response에서 책 정보를 dict로 추출하기
+      """
+      root = lxml.html.fromstring(html)
+      ebook = {
+          'url': response.url,
+          'key': key,
+          'title': root.cssselect('.store_product_info_box h3')[0].text_content(),
+          'price': root.cssselect('.pbr strong')[0].text_content(),
+          'content': [normalize_spaces(p.text_content())
+              for p in root.cssselect('#tabs_3 .hanbit_edit_view p')
+              if normalize_spaces(p.text_content()) != ""]
+      }
+      return ebook
+
+  def normalize_spaces(s):
+      """
+      연결돼 있는 공백을 하나의 공백으로 변경합니다.
+      """
+      return re.sub(r'\s+', ' ', s).strip()
+  </code>
+  </pre>
+  
 * 메시지 큐 운용하기
 
 ### 7-4. 크롤링 성능 향상과 비동기 처리
