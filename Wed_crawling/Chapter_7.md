@@ -275,6 +275,22 @@ Cron은 시간, 날짜, 요일을 지정해서 프로그램을 실행할 때 사
   </pre>
   
 * 메시지 큐 운용하기
+  * 워커 모듈화
+  <pre>
+  <code>
+  $ sudo apt-get install -y supervisor
+  
+  # 설정 완료 후
+  $ sudo service supervisor restart
+  $ sudo supervisorctl status
+  
+  # failed 큐에 들어 있는 모든 잡을 원래 큐로 다시 옮길 수 있음.
+  $ rq requeue -all
+  
+  # failed 큐의 모든 잡을 제거
+  $ rq empty failed
+  </code>
+  </pre>
 
 ### 7-4. 크롤링 성능 향상과 비동기 처리
 * 멀티 스레드와 멀티 프로세스
