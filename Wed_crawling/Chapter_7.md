@@ -293,10 +293,270 @@ Cron은 시간, 날짜, 요일을 지정해서 프로그램을 실행할 때 사
   </pre>
 
 ### 7-4. 크롤링 성능 향상과 비동기 처리
+크롤링 처리를 빠르게 만들기 위해 병렬 처리를 사용한다.
 * 멀티 스레드와 멀티 프로세스
+  * 멀티 스레드로 크롤링하기
+  <pre>
+  <code>
+  import sys
+  from concurrent.futures import ThreadPoolExecutor
+  import feedparser
+  import requests
+  from bs4 import BeautifulSoup
+
+  def main():
+      # URL을 추출합니다.
+      d = feedparser.parse('http://www.aladin.co.kr/rss/special_new/351')
+      urls = [entry.link for entry in d.entries]
+      # 최대 3개의 스레드로 병렬 처리하는 Executor를 생성합니다.
+      executer = ThreadPoolExecutor(max_workers=3)
+      # Future 객체를 저장할 리스트를 선언합니다.
+      futures = []
+      for url in urls:
+          # 함수의 실행을 스케줄링하고, Future 객체를 저장합니다.
+          # submit()의 두 번째 이후 매개변수는 getch_and_scrape() 함수의 매개변수로써 전달됩니다.
+          future = executer.submit(fetch_and_scrape, url)
+          futures.append(future)
+
+      for future in futures:
+          # Future 객체의 결과를 출력합니다.
+          print(future.result())
+
+  def fetch_and_scrape(url):
+      """
+      매개변수에 지정된 URL 페이지를 추출합니다.
+      URL와 타이틀을 추출해서 dict 자료형으로 반환합니다.
+      """
+      # RSS 링크를 분석합니다.
+      print('Parse Link', url.split('itemId=')[-1], file=sys.stderr)
+      response_a = requests.get(url)
+      soup_a = BeautifulSoup(response_a.content, 'lxml')
+      book_url = soup_a.select_one('noscript').text.strip().split('\n')[-1]
+      # 책 링크에 들어갑니다. 알라딘 사이트의 RSS가 이상하게 구성돼 있어서
+      # 이러한 형태로 타고 들어가도록 코드를 구성했습니다.
+      print('Parse Book Link', book_url.split('ISBN=')[-1], file=sys.stderr)
+      response_b = requests.get(book_url)
+      soup_b = BeautifulSoup(response_b.content, 'lxml')
+      return {
+          'url': url,
+          'title': soup_b.title.text.strip(),
+      }
+
+  if __name__ == '__main__':
+      main()
+  </code>
+  </pre>
+
 * 비동기 I/O를 사용해 효율적으로 크롤링하기
+  * asyncio로 시간이 걸리는 처리를 비동기적으로 실행하기
+  <pre>
+  <code>
+  import sys
+  import asyncio
+
+  import aiohttp
+  import feedparser
+  from bs4 import BeautifulSoup
+
+  # 최대 동시 다운로드 수를 3개로 제한하기 위한 세마포어를 생성합니다.
+  semaphore = asyncio.Semaphore(3)
+
+  async def main():
+      # 인기 항목 RSS에서 URL 목록을 추출합니다
+      d = feedparser.parse('http://www.reddit.com/r/python/.rss')
+      urls = [entry.link for entry in d.entries]
+      # 세션 객체를 생성합니다.
+      with aiohttp.ClientSession() as session:
+          # URL 개수만큼 코루틴을 생성합니다.
+          coroutines = []
+          for url in urls:
+              coroutine = fetch_and_scrape(session, url)
+              coroutines.append(coroutine)
+          # 코루틴을 완료한 뒤 반복합니다.
+          for coroutine in asyncio.as_completed(coroutines):
+              # 코루틴 결과를 출력합니다: 간단하게 출력을 보여드리고자 가공했습니다.
+              output = await coroutine
+              output['url'] = output['url'].replace('https://www.reddit.com/r/Python/comments', '')
+              print(output)
+
+  async def fetch_and_scrape(session, url):
+      """
+      매개변수로 지정한 URL과 제목을 포함한 dict를 반환합니다.
+      """
+      # 세마포어 락이 풀릴 때까지 대기합니다.
+      with await semaphore:
+          print('Start downloading', 
+              url.replace('https://www.reddit.com/r/Python/comments', ''), 
+              file=sys.stderr)
+          # 비동기로 요청을 보내고 응답 헤더를 추출합니다.
+          response = await session.get(url)
+          # 응답 본문을 비동기적으로 추출합니다.
+          soup = BeautifulSoup(await response.read(), 'lxml')
+          return {
+              'url': url,
+              'title': soup.title.text.strip(),
+          }
+
+  if __name__ == '__main__':
+      # 이벤트 루프를 추출합니다.
+      loop = asyncio.get_event_loop()
+      # 이벤트 루프로 main()을 실행하고 종료할 때까지 대기합니다.
+      loop.run_until_complete(main())
+  </pre>
+  </code>
+  
+  * 시간이 걸리는 처리를 동기적으로 실행하기
+  <pre>
+  <code>
+  import time
+
+  def slow_job(n):
+      """
+      매개변수로 지정한 시간 만큼 시간이 걸리는 처리를 수행하는 함수입니다.
+      time.sleep()을 사용해 시간이 걸리는 처리를 비슷하게 재현해 봤습니다.
+      """
+      print('Job {0} will take {0} seconds'.format(n))
+      # n초 대기합니다.
+      time.sleep(n)
+      print('Job {0} finished'.format(n))
+
+  slow_job(1)
+  slow_job(2)
+  slow_job(3)
+  </code>
+  </pre>
+  
+  * aiohttp를 이용한 비동기 크롤링
+  <pre>
+  <code>
+  import sys
+  import asyncio
+
+  import aiohttp
+  import feedparser
+  from bs4 import BeautifulSoup
+
+  # 최대 동시 다운로드 수를 3개로 제한하기 위한 세마포어를 생성합니다.
+  semaphore = asyncio.Semaphore(3)
+
+  async def main():
+      # 인기 항목 RSS에서 URL 목록을 추출합니다
+      d = feedparser.parse('http://www.reddit.com/r/python/.rss')
+      urls = [entry.link for entry in d.entries]
+      # 세션 객체를 생성합니다.
+      with aiohttp.ClientSession() as session:
+          # URL 개수만큼 코루틴을 생성합니다.
+          coroutines = []
+          for url in urls:
+              coroutine = fetch_and_scrape(session, url)
+              coroutines.append(coroutine)
+          # 코루틴을 완료한 뒤 반복합니다.
+          for coroutine in asyncio.as_completed(coroutines):
+              # 코루틴 결과를 출력합니다: 간단하게 출력을 보여드리고자 가공했습니다.
+              output = await coroutine
+              output['url'] = output['url'].replace('https://www.reddit.com/r/Python/comments', '')
+              print(output)
+
+  async def fetch_and_scrape(session, url):
+      """
+      매개변수로 지정한 URL과 제목을 포함한 dict를 반환합니다.
+      """
+      # 세마포어 락이 풀릴 때까지 대기합니다.
+      with await semaphore:
+          print('Start downloading', 
+              url.replace('https://www.reddit.com/r/Python/comments', ''), 
+              file=sys.stderr)
+          # 비동기로 요청을 보내고 응답 헤더를 추출합니다.
+          response = await session.get(url)
+          # 응답 본문을 비동기적으로 추출합니다.
+          soup = BeautifulSoup(await response.read(), 'lxml')
+          return {
+              'url': url,
+              'title': soup.title.text.strip(),
+          }
+
+  if __name__ == '__main__':
+      # 이벤트 루프를 추출합니다.
+      loop = asyncio.get_event_loop()
+      # 이벤트 루프로 main()을 실행하고 종료할 때까지 대기합니다.
+      loop.run_until_complete(main())
+  </code>
+  </pre>
 
 ### 7-5. 클라우드 활용하기
 * 클라우드의 장점
+  * 리소스를 간단하게 조달할 수 있으며, 줄이는 것도 쉽다.
+  * 클라우드 사업자에게 운용과 관련된 내용을 맡길 수 있다.
+  * 클라우드 서비스를 API로 조작할 수 있다.
+  
 * AWS SDK 사용하기
+파이썬에서 API를 사용할 때는 AWS SDK for Python(Boto3)이라는 라이브러리를 사용한다. 
+<pre>
+<code>
+$ pip install boto3
+</code>
+</pre>
+
 * 클라우드 스토리지 사용하기
+  * Wikimedia Commons에서 이미지 파일을 다운로드하고 S3에 저장하기
+  <pre>
+  <code>
+  import sys
+  import time
+  import requests
+  import lxml.html
+  import boto3
+
+  # S3 버킷 이름[자신이 생성한 버킷 이름으로 변경해 주세요]
+  S3_BUCKET_NAME = 'scraping-book'
+
+  def main():
+      # Wikimedia Commons 페이지에서 이미지 URL을 추출합니다.
+      image_urls = get_image_urls('https://commons.wikimedia.org/wiki/Category:Mountain_glaciers')
+      # S3 Bucket 객체를 추출합니다.
+      s3 = boto3.resource('s3')
+      bucket = s3.Bucket(S3_BUCKET_NAME)
+
+      for image_url in image_urls:
+          # 2초 동안 대기합니다.
+          time.sleep(2)
+
+          # 이미지 파일을 내려받습니다.
+          print('Downloading', image_url, file=sys.stderr)
+          response = requests.get(image_url)
+
+          # URL을 기반으로 파일 이름을 추출합니다.
+          _, filename = image_url.rsplit('/', maxsplit=1)
+
+          # 다운로드한 파일을 S3에 저장합니다.
+          print('Putting', filename, file=sys.stderr)
+          bucket.put_object(Key=filename, Body=response.content)
+
+  def get_image_urls(page_url):
+      """
+      매개변수로 전달된 페이지에 출력되고 있는 섬네일 이미지의 원래 URL을 추출합니다.
+      """
+      response = requests.get(page_url)
+      html = lxml.html.fromstring(response.text)
+
+      image_urls = []
+      for img in html.cssselect('.thumb img'):
+          thumbnail_url = img.get('src')
+          image_urls.append(get_original_url(thumbnail_url))
+
+      return image_urls
+
+  def get_original_url(thumbnail_url):
+      """
+      섬네일 URL에서 원래 이미지 URL을 추출합니다.
+      """
+      # /로 잘라서 디렉터리에 대응하는 부분의 URL을 추출합니다.
+      directory_url, _ = thumbnail_url.rsplit('/', maxsplit=1)
+      # /thumb/을 /로 변경해서 원래 이미지 URL을 추출합니다.
+      original_url = directory_url.replace('/thumb/', '/')
+      return original_url
+
+  if __name__ == '__main__':
+      main()
+  </code>
+  </pre>
